@@ -2,13 +2,16 @@ package com.patrhom.gradle.jarcheck
 
 import com.patrhom.gradle.jarcheck.tasks.ExamineJarContentTask
 import com.patrhom.gradle.jarcheck.tasks.ExamineJarManifestClasspathTask
+import com.patrhom.gradle.jarcheck.tasks.JarExaminationTasks
 import com.patrhom.gradle.jarcheck.tasks.ListFileComparisonTask
 import org.gradle.api.Action
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.Task
 import org.gradle.api.plugins.BasePlugin
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.TaskProvider
 
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -19,36 +22,11 @@ class JarCheckPlugin implements Plugin<Project> {
   static final String ROOT_CHECK_TASK_NAME = "jarCheckAll"
   static final String ROOT_UPDATE_TASK_NAME = "jarCheckUpdateAll"
 
-  static final String EXPECTATIONS_BUILD_DIR = "src/build-resources/jarCheckExpectations"
+  static final String DEFAULT_EXPECTATIONS_PROJECT_DIR = "src/build-resources/jarCheckExpectations"
 
   JarCheckExtension extension
 
   Set<String> seenJarNamePieces = new HashSet<>()
-
-
-  @Override
-  void apply(Project project) {
-    project.getPlugins().apply(BasePlugin.class)
-
-    project.tasks.register(ROOT_CHECK_TASK_NAME) {
-      group "verification"
-      description "This is a synthetic task to perform all jar checks configured with the JarCheck plugin."
-    }
-
-    project.tasks.register(ROOT_UPDATE_TASK_NAME, Sync) {
-      into "${project.projectDir}/${EXPECTATIONS_BUILD_DIR}"
-      group "verification"
-      description "This is a synthetic task to perform all jar expectation updates configured with the JarCheck plugin."
-    }
-
-    // setup the extension
-    extension = project.getExtensions().create(EXTENSION_NAME, JarCheckExtension.class, project)
-
-    project.afterEvaluate({
-      createTasks(project)
-      hookIntoCheckIfRequested(project)
-    } as Action<Project>)
-  }
 
   static String stripToTaskNameFormat(File jarFile) {
     return stripToTaskNameFormat(jarFile.name)
@@ -58,16 +36,28 @@ class JarCheckPlugin implements Plugin<Project> {
     return s.replaceAll(/(?i)\.jar$/, '').split(/[^a-zA-Z01-9]+/)*.capitalize().join("")
   }
 
-  void hookIntoCheckIfRequested(Project project) {
-    if (extension.makePartOfCheck) {
-      project.tasks.named('check').configure {
-        dependsOn project.tasks.named(ROOT_CHECK_TASK_NAME)
+
+  @Override
+  void apply(Project project) {
+    // We need ':check' to exist.
+    project.getPlugins().apply(BasePlugin.class)
+
+    // setup the extension
+    extension = project.getExtensions().create(EXTENSION_NAME, JarCheckExtension.class, project)
+
+    // Delay to allow for configuration
+    project.afterEvaluate({
+      createTasks(project)
+      if (extension.runWithCheck) {
+        project.tasks.named('check').configure {
+          dependsOn project.tasks.named(ROOT_CHECK_TASK_NAME)
+        }
       }
-    }
+    } as Action<Project>)
   }
 
 
-  void createTaskTrio(Project project, String descriptor, Class examineTaskType, File jarFile, String jarTaskNamePiece, Path workingBuildDir, Path expectationDir, JarCheckConfiguration config) {
+  void createTaskTrio(Project project, Class<? extends JarExaminationTasks> examineTaskType, String descriptor, File jarFile, Object jarObject, String jarTaskNamePiece, Path workingBuildDir, Path expectationDir, JarCheckConfiguration config) {
     project.logger.debug("Adding ${descriptor.toUpperCase()} checks for ${jarFile}")
 
     String examineTaskName = "examine${jarTaskNamePiece}${stripToTaskNameFormat(descriptor)}"
@@ -84,48 +74,75 @@ class JarCheckPlugin implements Plugin<Project> {
       checks jarFile
       outputFile = actualFile
 
-      if (config.jarCreator != null) {
-        inputs.files { config.jarCreator }
-      }
+      inputs.files { jarObject }
     }
 
     createUpdateAndCheckTasks(project, updateTaskName, actualFile, expectationFile, examineTaskName, checkTaskName, reportFile)
   }
 
   void createTasks(Project project) {
+    Path expectationDir = (extension.expectationsDir
+        ? project.file(extension.expectationsDir).toPath()
+        : Paths.get("${project.projectDir}/${DEFAULT_EXPECTATIONS_PROJECT_DIR}"))
+    println("Using expectationsDir = ${expectationDir}")
+    Path workingBuildDir = Paths.get("${project.buildDir}/${EXTENSION_NAME}")
+
+    project.tasks.register(ROOT_CHECK_TASK_NAME) {
+      group "verification"
+      description "This is a synthetic task to perform all jar checks configured with the JarCheck plugin."
+    }
+    project.tasks.register(ROOT_UPDATE_TASK_NAME, Sync) {
+      into "${project.projectDir}/${DEFAULT_EXPECTATIONS_PROJECT_DIR}"
+      group "verification"
+      description "This is a synthetic task to perform all jar expectation updates configured with the JarCheck plugin."
+    }
+
     if (extension.implicitlyCheckAll) {
       extension.checkAllJarTasks()
     }
 
-    Path expectationDir = Paths.get("${project.projectDir}/${EXPECTATIONS_BUILD_DIR}")
-    Path workingBuildDir = Paths.get("${project.buildDir}/${EXTENSION_NAME}")
-
     if (!expectationDir.toFile().exists()) {
       expectationDir.toFile().mkdirs()
     }
-    extension.jarsToCheck.each { File jarFile, JarCheckConfiguration config ->
+
+    extension.jarsToCheck.each { Object jarObject, JarCheckConfiguration config ->
+      File jarFile = getJarFileFromInputObject(jarObject, project)
       String jarTaskNamePiece = stripToTaskNameFormat(jarFile)
       project.logger.debug("Creating check tasks for sanitized task name piece: ${jarTaskNamePiece}...")
 
       if (seenJarNamePieces.contains(jarTaskNamePiece)) {
         throw new IllegalArgumentException(
-          "A jar with corresponding task name piece ${jarTaskNamePiece}" +
-            " has already been registered for checking.  " +
-            "Task names are generated by stripping non-alphanumeric characters and capitalizing.  " +
-            "Tasks names cannot be inferred when similarly-named jars exist.  " +
-            "Resolve this conflict or configure jar checking tasks directly.")
+            "A jar with corresponding task name piece ${jarTaskNamePiece}" +
+                " has already been registered for checking.  " +
+                "Task names are generated by stripping non-alphanumeric characters and capitalizing.  " +
+                "Tasks names cannot be inferred when similarly-named jars exist.  " +
+                "Resolve this conflict or configure jar checking tasks directly.")
       }
       seenJarNamePieces.add(jarTaskNamePiece)
 
       if (config.checkContent) {
-        createTaskTrio(project, "content", ExamineJarContentTask, jarFile, jarTaskNamePiece, workingBuildDir, expectationDir, config)
+        createTaskTrio(project, ExamineJarContentTask, "content",
+            jarFile, jarObject, jarTaskNamePiece, workingBuildDir, expectationDir, config)
       }
 
       if (config.checkManifestClasspath) {
-        createTaskTrio(project, "manifest-classpath", ExamineJarManifestClasspathTask, jarFile, jarTaskNamePiece, workingBuildDir, expectationDir, config)
+        createTaskTrio(project, ExamineJarManifestClasspathTask, "manifest-classpath",
+            jarFile, jarObject, jarTaskNamePiece, workingBuildDir, expectationDir, config)
 
       }
     }
+  }
+
+  private File getJarFileFromInputObject(Object jarObject, Project project) {
+    File jarFile
+    if (jarObject instanceof Task) {
+      jarFile = jarObject.outputs.files.singleFile
+    } else if (jarObject instanceof TaskProvider) {
+      jarFile = (jarObject.get() as Task).outputs.files.singleFile
+    } else {
+      jarFile = project.file(jarObject)
+    }
+    jarFile
   }
 
   private void createUpdateAndCheckTasks(Project project, String updateTaskname, File actualFile, File expectationFile, String examineTaskname, String checkTaskname, File reportFile) {

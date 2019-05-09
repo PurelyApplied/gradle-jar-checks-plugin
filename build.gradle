@@ -2,24 +2,20 @@ plugins {
   id "com.gradle.plugin-publish" version "0.10.1"
   id "java-gradle-plugin"
   id "groovy"
+  id 'maven-publish'
 }
-
-group "com.patrhom.jarCheck"
 
 repositories {
   mavenCentral()
 }
 
-dependencies {
-  testRuntime ('org.apache.geode:geode-junit:1.3.0') {
-    exclude group: 'org.apache.logging.log4j'
+
+// Use java-gradle-plugin to generate plugin descriptors and specify plugin ids
+gradlePlugin {
+  plugins {
+    jarCheck {
+      id = project.pluginId
+      implementationClass = 'com.patrhom.gradle.jarcheck.JarCheckPlugin'
+    }
   }
-  compile gradleApi()
-  compile 'org.apache.commons:commons-lang3:3.3.2'
-  compile 'org.apache.maven:maven-artifact:3.3.3'
-  compile 'com.github.docker-java:docker-java:3.0.14'
-
-  compile 'junit:junit:4.12'
-
-  testAnnotationProcessor this.project
 }
