@@ -14,8 +14,21 @@ repositories {
 gradlePlugin {
   plugins {
     jarCheck {
-      id = project.pluginId
+      id = "${project.group}.${project.pluginId}"
       implementationClass = 'com.patrhom.gradle.jarcheck.JarCheckPlugin'
+    }
+  }
+}
+
+pluginBundle {
+  website = 'https://github.com/PurelyApplied/gradle-jar-checks-plugin'
+  vcsUrl = 'https://github.com/PurelyApplied/gradle-jar-checks-plugin'
+  description = "A golden-file verification of jar task outputs."
+  tags = ['validation', 'jar', 'check']
+
+  plugins {
+    jarCheck {
+      displayName = "Golden-file Jar Checker"
     }
   }
 }
