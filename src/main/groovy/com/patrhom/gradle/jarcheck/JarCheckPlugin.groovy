@@ -84,7 +84,7 @@ class JarCheckPlugin implements Plugin<Project> {
     Path expectationDir = (extension.expectationsDir
         ? project.file(extension.expectationsDir).toPath()
         : Paths.get("${project.projectDir}/${DEFAULT_EXPECTATIONS_PROJECT_DIR}"))
-    println("Using expectationsDir = ${expectationDir}")
+    project.logger.info("Using expectationsDir = ${expectationDir}")
     Path workingBuildDir = Paths.get("${project.buildDir}/${EXTENSION_NAME}")
 
     project.tasks.register(ROOT_CHECK_TASK_NAME) {

@@ -36,7 +36,7 @@ class ExamineJarManifestClasspathTask extends JarExaminationTasks {
     FileTree jarTree = project.zipTree(jarFile)
     Object manifest = jarTree.find { it.path.endsWith('/META-INF/MANIFEST.MF') }
     if (manifest == null) {
-      println "Jar file ${jarFile} does not appear to have a manifest.  Using empty classpath."
+      logger.warn("Jar file ${jarFile} does not appear to have a manifest.  Using empty classpath.")
       outputFile.write("")
       return
     }
